@@ -55,10 +55,15 @@ jobs:
       - name: Instalar dependências
         run: pip install -r requirements.txt
 
-      - name: 1. Ingestão — baixar convênios da API do Portal da Transparência
+      - name: 1a. Ingestão — baixar convênios da API do Portal da Transparência
         env:
           PORTAL_TRANSPARENCIA_API_KEY: ${{ secrets.PORTAL_TRANSPARENCIA_API_KEY }}
         run: python ingestion/extract_convenios.py
+
+      - name: 1b. Ingestão — baixar emendas parlamentares da API do Portal da Transparência
+        env:
+          PORTAL_TRANSPARENCIA_API_KEY: ${{ secrets.PORTAL_TRANSPARENCIA_API_KEY }}
+        run: python ingestion/extract_emendas.py
 
       - name: 2. Transformação — rodar models e testes do dbt
         working-directory: transform

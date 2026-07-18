@@ -60,3 +60,32 @@ models:
         description: Valor total do convênio, em reais.
         data_tests:
           - not_null
+
+  - name: dim_autor_emenda
+    description: >
+      Um autor de emenda parlamentar por linha — pode ser um parlamentar
+      individual OU uma entidade coletiva (bancada estadual, comissão).
+    columns:
+      - name: sk_autor_emenda
+        description: Chave primária (surrogate key) da dimensão.
+        data_tests:
+          - unique
+          - not_null
+
+  - name: fct_emendas
+    description: >
+      Uma linha por emenda parlamentar, com o ciclo orçamentário (empenhado
+      -> liquidado -> pago) e a taxa de execução.
+    columns:
+      - name: codigo_emenda
+        description: Identificador da emenda na fonte original.
+        data_tests:
+          - not_null
+      - name: sk_autor_emenda
+        description: Chave estrangeira para dim_autor_emenda.
+        data_tests:
+          - not_null
+      - name: valor_empenhado
+        description: Valor destinado pelo autor da emenda, em reais.
+        data_tests:
+          - not_null

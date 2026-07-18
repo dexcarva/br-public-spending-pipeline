@@ -182,6 +182,80 @@ def exportar_municipios(con: duckdb.DuckDBPyConnection) -> None:
     _escrever_json("municipios.json", dados)
 
 
+def exportar_kpis_emendas(con: duckdb.DuckDBPyConnection) -> None:
+    """Números-resumo das emendas parlamentares — arquivo separado de
+    kpis.json de propósito: são duas fontes de dado diferentes (convênios x
+    emendas), e misturar tudo num JSON só confundiria mais do que ajudaria."""
+    linha = con.sql(f"""
+        select
+            sum(f.valor_empenhado)  as total_empenhado,
+            sum(f.valor_pago)       as total_pago,
+            sum(f.valor_resto_cancelado) as total_cancelado,
+            sum(f.valor_pago) / nullif(sum(f.valor_empenhado), 0) as taxa_execucao_geral,
+            count(*)                as numero_emendas,
+            count(distinct case when a.eh_parlamentar_individual then a.sk_autor_emenda end)
+                                     as numero_parlamentares_individuais,
+            min(f.ano)               as ano_inicio,
+            max(f.ano)               as ano_fim
+        from {SCHEMA_MARTS}.fct_emendas f
+        join {SCHEMA_MARTS}.dim_autor_emenda a on f.sk_autor_emenda = a.sk_autor_emenda
+    """).fetchone()
+
+    kpis = {
+        "total_empenhado": linha[0],
+        "total_pago": linha[1],
+        # Dinheiro destinado por um parlamentar e depois oficialmente
+        # cancelado — nunca virou entrega nenhuma. É o número mais direto
+        # sobre "prometeu e não entregou" que os dados oficiais sustentam.
+        "total_cancelado": linha[2],
+        "taxa_execucao_geral": float(linha[3]) if linha[3] is not None else None,
+        "numero_emendas": linha[4],
+        "numero_parlamentares_individuais": linha[5],
+        "ano_inicio": linha[6],
+        "ano_fim": linha[7],
+        "gerado_em": datetime.now(timezone.utc).isoformat(),
+    }
+    _escrever_json("kpis_emendas.json", kpis)
+
+
+def exportar_ranking_parlamentares(con: duckdb.DuckDBPyConnection) -> None:
+    """Um agregado por autor de emenda (parlamentar individual OU bancada/
+    comissão — rotulado via tipo_emenda/individual, ver dim_autor_emenda.sql).
+    A taxa_execucao é recalculada aqui como soma(pago)/soma(empenhado), não
+    como média das taxas por emenda — média de taxas ponderaria emendas
+    pequenas e grandes igualmente, o que distorceria o número."""
+    linhas = con.sql(f"""
+        select
+            a.nome_autor,
+            a.tipo_emenda,
+            a.eh_parlamentar_individual,
+            sum(f.valor_empenhado)       as valor_empenhado,
+            sum(f.valor_pago)            as valor_pago,
+            sum(f.valor_resto_cancelado) as valor_resto_cancelado,
+            sum(f.valor_pago) / nullif(sum(f.valor_empenhado), 0) as taxa_execucao,
+            count(*)                     as numero_emendas
+        from {SCHEMA_MARTS}.fct_emendas f
+        join {SCHEMA_MARTS}.dim_autor_emenda a on f.sk_autor_emenda = a.sk_autor_emenda
+        group by 1, 2, 3
+        order by valor_empenhado desc
+    """).fetchall()
+
+    dados = [
+        {
+            "nome": r[0],
+            "tipo_emenda": r[1],
+            "individual": r[2],
+            "valor_empenhado": r[3],
+            "valor_pago": r[4],
+            "valor_resto_cancelado": r[5],
+            "taxa_execucao": float(r[6]) if r[6] is not None else None,
+            "numero_emendas": r[7],
+        }
+        for r in linhas
+    ]
+    _escrever_json("ranking_parlamentares.json", dados)
+
+
 def main() -> None:
     print(f"Lendo {DUCKDB_PATH}...")
     con = _conectar_somente_leitura()
@@ -190,6 +264,8 @@ def main() -> None:
         exportar_ranking_orgaos(con)
         exportar_serie_temporal(con)
         exportar_municipios(con)
+        exportar_kpis_emendas(con)
+        exportar_ranking_parlamentares(con)
     finally:
         con.close()
     print("Export concluído.")

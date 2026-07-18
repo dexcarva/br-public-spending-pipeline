@@ -93,7 +93,28 @@ main {
 .meta-atualizacao {
   font-size: 13px;
   color: var(--texto-mudo);
-  margin: 0;
+  margin: 0 0 16px;
+}
+
+.nav-secoes {
+  display: flex;
+  gap: 20px;
+}
+
+.nav-secoes a {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--serie-azul);
+  text-decoration: none;
+}
+
+.nav-secoes a:hover {
+  text-decoration: underline;
+}
+
+.titulo-menor {
+  font-size: 16px;
+  margin: 24px 0 12px;
 }
 
 .secao {
@@ -191,6 +212,20 @@ main {
   color: var(--texto-secundario);
 }
 
+.filtro-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--texto-primario);
+}
+
+.filtro-checkbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--serie-azul);
+}
+
 .filtro select {
   font: inherit;
   font-size: 14px;
@@ -257,6 +292,28 @@ main {
 
 .tabela-dados tbody tr:last-child td {
   border-bottom: none;
+}
+
+/* Cabeçalho clicável (tabela-ordenavel): o cursor e o indicador de seta
+   avisam que a coluna é interativa antes mesmo do visitante clicar. */
+.tabela-ordenavel th {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.tabela-ordenavel th:hover {
+  color: var(--serie-azul);
+}
+
+.tabela-ordenavel th[data-ordem]::after {
+  content: " ▾";
+  font-size: 11px;
+  color: var(--texto-mudo);
+}
+
+.tabela-ordenavel th[data-ordem="asc"]::after {
+  content: " ▴";
 }
 
 .rodape {

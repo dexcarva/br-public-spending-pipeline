@@ -32,9 +32,21 @@ const formatoMoedaCheia = new Intl.NumberFormat("pt-BR", {
 
 const formatoInteiro = new Intl.NumberFormat("pt-BR");
 
+const formatoPercentual = new Intl.NumberFormat("pt-BR", {
+  style: "percent",
+  maximumFractionDigits: 0,
+});
+
 function moeda(valorString, { compacta = true } = {}) {
   const numero = Number(valorString ?? 0);
   return (compacta ? formatoMoedaCompacta : formatoMoedaCheia).format(numero);
+}
+
+function percentual(valor) {
+  // taxa_execucao vem null quando valor_empenhado é 0 (nada foi destinado,
+  // então "quanto disso foi pago" não faz sentido como razão) — mostramos
+  // um traço em vez de "0%", que sugeriria falsamente execução zero.
+  return valor === null || valor === undefined ? "—" : formatoPercentual.format(valor);
 }
 
 function inteiro(valor) {
@@ -381,6 +393,184 @@ function configurarFiltrosMunicipio() {
 }
 
 // ---------------------------------------------------------------------------
+// Emendas parlamentares: KPIs, gráfico empenhado x pago, filtro individual/
+// coletivo e tabela com ordenação por coluna.
+// ---------------------------------------------------------------------------
+
+function renderizarKPIsEmendas(kpis) {
+  const cartoes = [
+    { rotulo: "Total empenhado (proposto)", valor: moeda(kpis.total_empenhado), detalhe: null },
+    { rotulo: "Total pago (executado)", valor: moeda(kpis.total_pago), detalhe: null },
+    {
+      rotulo: "Total cancelado sem execução",
+      valor: moeda(kpis.total_cancelado),
+      detalhe: "empenhado e depois oficialmente cancelado — nunca virou entrega",
+    },
+    { rotulo: "Taxa de execução geral", valor: percentual(kpis.taxa_execucao_geral), detalhe: null },
+    {
+      rotulo: "Parlamentares individuais rastreados",
+      valor: inteiro(kpis.numero_parlamentares_individuais),
+      detalhe: `emendas de ${kpis.ano_inicio} a ${kpis.ano_fim}`,
+    },
+  ];
+
+  const grade = document.getElementById("kpi-grade-emendas");
+  grade.replaceChildren(
+    ...cartoes.map((c) => {
+      const cartao = document.createElement("article");
+      cartao.className = "kpi-cartao";
+
+      const rotulo = document.createElement("p");
+      rotulo.className = "kpi-rotulo";
+      rotulo.textContent = c.rotulo;
+
+      const valor = document.createElement("p");
+      valor.className = "kpi-valor";
+      valor.textContent = c.valor;
+
+      cartao.append(rotulo, valor);
+
+      if (c.detalhe) {
+        const detalhe = document.createElement("p");
+        detalhe.className = "kpi-detalhe";
+        detalhe.textContent = c.detalhe;
+        cartao.append(detalhe);
+      }
+      return cartao;
+    })
+  );
+}
+
+let parlamentaresTodos = [];
+let graficoParlamentares = null;
+let ordenacaoParlamentares = { chave: "valor_empenhado", direcao: "desc" };
+
+// Colunas de texto ordenam A→Z por padrão; colunas numéricas ordenam do
+// maior pro menor por padrão (é o que faz sentido na primeira vez que se
+// clica em "Taxa de execução": ver os maiores primeiro, não os menores).
+const COLUNAS_TEXTO_PARLAMENTARES = new Set(["nome", "tipo_emenda"]);
+
+function parlamentaresFiltrados() {
+  const soIndividual = document.getElementById("filtro-so-individual").checked;
+  return soIndividual ? parlamentaresTodos.filter((p) => p.individual) : parlamentaresTodos;
+}
+
+function renderizarGraficoParlamentares(lista) {
+  const top15 = lista.slice(0, 15);
+
+  const dados = {
+    labels: top15.map((p) => p.nome),
+    datasets: [
+      {
+        label: "Empenhado (proposto)",
+        data: top15.map((p) => Number(p.valor_empenhado)),
+        backgroundColor: corTema("--serie-azul-fraca"),
+        borderRadius: 4,
+        maxBarThickness: 18,
+      },
+      {
+        label: "Pago (executado)",
+        data: top15.map((p) => Number(p.valor_pago)),
+        backgroundColor: corTema("--serie-azul"),
+        borderRadius: 4,
+        maxBarThickness: 18,
+      },
+    ],
+  };
+
+  if (graficoParlamentares) {
+    graficoParlamentares.data = dados;
+    graficoParlamentares.update();
+  } else {
+    graficoParlamentares = new Chart(document.getElementById("grafico-parlamentares"), {
+      type: "bar",
+      data: dados,
+      options: {
+        indexAxis: "y",
+        // Duas séries (empenhado x pago) -> legenda sempre visível, pra
+        // identidade não depender só da cor.
+        plugins: {
+          legend: { position: "top", align: "start" },
+          tooltip: {
+            callbacks: { label: (item) => `${item.dataset.label}: ${moeda(item.raw, { compacta: false })}` },
+          },
+        },
+        scales: {
+          x: {
+            ticks: { callback: (valor) => moeda(valor) },
+            grid: { color: corTema("--linha-grade") },
+          },
+          y: { grid: { display: false } },
+        },
+      },
+    });
+  }
+
+  const nota = document.getElementById("nota-parlamentares");
+  nota.textContent =
+    lista.length > top15.length
+      ? `Mostrando os 15 maiores de ${inteiro(lista.length)} autores no filtro atual.`
+      : `Mostrando ${inteiro(lista.length)} autor(es) no filtro atual.`;
+}
+
+function renderizarTabelaParlamentares(lista) {
+  const { chave, direcao } = ordenacaoParlamentares;
+  const sinal = direcao === "asc" ? 1 : -1;
+
+  const ordenada = [...lista].sort((a, b) => {
+    const va = a[chave];
+    const vb = b[chave];
+    if (va === null || va === undefined) return 1; // nulos (taxa_execucao sem empenho) sempre por último
+    if (vb === null || vb === undefined) return -1;
+    if (typeof va === "string") return sinal * va.localeCompare(vb, "pt-BR");
+    return sinal * (Number(va) - Number(vb));
+  });
+
+  preencherTabela("tabela-parlamentares", ordenada, (p) => [
+    p.nome,
+    p.tipo_emenda,
+    moeda(p.valor_empenhado, { compacta: false }),
+    moeda(p.valor_pago, { compacta: false }),
+    moeda(p.valor_resto_cancelado, { compacta: false }),
+    percentual(p.taxa_execucao),
+    inteiro(p.numero_emendas),
+  ]);
+
+  document.querySelectorAll("#tabela-parlamentares thead th").forEach((th) => {
+    if (th.dataset.chave === chave) {
+      th.setAttribute("data-ordem", direcao);
+    } else {
+      th.removeAttribute("data-ordem");
+    }
+  });
+}
+
+function atualizarEmendas() {
+  const lista = parlamentaresFiltrados();
+  renderizarGraficoParlamentares(lista);
+  renderizarTabelaParlamentares(lista);
+}
+
+function configurarInteracoesEmendas() {
+  document.getElementById("filtro-so-individual").addEventListener("change", atualizarEmendas);
+
+  document.querySelectorAll("#tabela-parlamentares thead th[data-chave]").forEach((th) => {
+    th.addEventListener("click", () => {
+      const chave = th.dataset.chave;
+      if (ordenacaoParlamentares.chave === chave) {
+        ordenacaoParlamentares.direcao = ordenacaoParlamentares.direcao === "asc" ? "desc" : "asc";
+      } else {
+        ordenacaoParlamentares = {
+          chave,
+          direcao: COLUNAS_TEXTO_PARLAMENTARES.has(chave) ? "asc" : "desc",
+        };
+      }
+      renderizarTabelaParlamentares(parlamentaresFiltrados());
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Tabelas (a alternativa acessível a cada gráfico) + botões de alternância.
 // ---------------------------------------------------------------------------
 
@@ -423,30 +613,57 @@ async function buscarJson(caminho) {
   return resposta.json();
 }
 
+async function iniciarConvenios() {
+  const [kpis, ranking, serie, municipios] = await Promise.all([
+    buscarJson("data/kpis.json"),
+    buscarJson("data/ranking_orgaos.json"),
+    buscarJson("data/serie_temporal.json"),
+    buscarJson("data/municipios.json"),
+  ]);
+
+  renderizarKPIs(kpis);
+  renderizarGraficoOrgaos(ranking);
+  renderizarGraficoSerie(serie);
+
+  municipiosTodos = municipios;
+  configurarFiltrosMunicipio();
+  atualizarRankingMunicipios();
+}
+
+async function iniciarEmendas() {
+  const [kpis, ranking] = await Promise.all([
+    buscarJson("data/kpis_emendas.json"),
+    buscarJson("data/ranking_parlamentares.json"),
+  ]);
+
+  renderizarKPIsEmendas(kpis);
+  parlamentaresTodos = ranking;
+  configurarInteracoesEmendas();
+  atualizarEmendas();
+}
+
 async function iniciar() {
   configurarChartJsGlobal();
   configurarBotoesTabela();
 
-  try {
-    const [kpis, ranking, serie, municipios] = await Promise.all([
-      buscarJson("data/kpis.json"),
-      buscarJson("data/ranking_orgaos.json"),
-      buscarJson("data/serie_temporal.json"),
-      buscarJson("data/municipios.json"),
-    ]);
+  // Convênios e emendas são duas fontes de dado independentes — cada uma
+  // tenta carregar por conta própria, então se uma faltar (ex.: o workflow
+  // de emendas ainda não rodou), a outra seção do site continua funcionando
+  // normalmente em vez da página inteira ficar em branco por causa de uma
+  // falha isolada.
+  const resultados = await Promise.allSettled([iniciarConvenios(), iniciarEmendas()]);
 
-    renderizarKPIs(kpis);
-    renderizarGraficoOrgaos(ranking);
-    renderizarGraficoSerie(serie);
-
-    municipiosTodos = municipios;
-    configurarFiltrosMunicipio();
-    atualizarRankingMunicipios();
-  } catch (erro) {
-    console.error(erro);
-    document.getElementById("meta-atualizacao").textContent =
-      "Não foi possível carregar os dados agora. Se você abriu este arquivo direto " +
-      "(file://), sirva a pasta docs/ com um servidor HTTP local — veja o README.";
+  const erros = resultados.filter((r) => r.status === "rejected");
+  const meta = document.getElementById("meta-atualizacao");
+  if (erros.length > 0) {
+    erros.forEach((r) => console.error(r.reason));
+    if (erros.length === resultados.length) {
+      meta.textContent =
+        "Não foi possível carregar os dados agora. Se você abriu este arquivo direto " +
+        "(file://), sirva a pasta docs/ com um servidor HTTP local — veja o README.";
+    } else {
+      meta.textContent += " (uma das seções não carregou — veja o console para detalhes)";
+    }
   }
 }
 

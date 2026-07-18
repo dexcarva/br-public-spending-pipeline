@@ -23,6 +23,7 @@ macro-paths: ["macros"]
 # uma dependência externa configurável, não um detalhe escondido do model.
 vars:
   raw_convenios_path: "../data/raw/convenios.jsonl"
+  raw_emendas_path: "../data/raw/emendas.jsonl"
 
 clean-targets:
   - "target"

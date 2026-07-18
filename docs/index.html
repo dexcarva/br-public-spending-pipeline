@@ -34,13 +34,17 @@
         qualquer pessoa acompanhar.
       </p>
       <p class="meta-atualizacao" id="meta-atualizacao">carregando dados…</p>
+      <nav class="nav-secoes" aria-label="Ir para seção">
+        <a href="#convenios">Convênios</a>
+        <a href="#emendas">Emendas parlamentares</a>
+      </nav>
     </div>
   </header>
 
   <main>
 
     <!-- Linha de KPIs: os "números-resumo" que qualquer visitante lê em 5 segundos. -->
-    <section aria-label="Indicadores gerais" class="secao">
+    <section id="convenios" aria-label="Indicadores gerais" class="secao">
       <div class="kpi-grade" id="kpi-grade">
         <!-- preenchido via JS: js/app.js -> renderizarKPIs() -->
       </div>
@@ -140,19 +144,88 @@
       </div>
     </section>
 
+    <!-- Emendas parlamentares: quem propõe x quem entrega. -->
+    <section id="emendas" class="secao" aria-labelledby="titulo-emendas">
+      <div class="secao-cabecalho">
+        <div>
+          <h2 id="titulo-emendas">Emendas parlamentares: proposto x executado</h2>
+          <p class="secao-descricao">
+            Emenda parlamentar é como um deputado, senador, bancada estadual
+            ou comissão destina uma fatia do orçamento federal a um projeto.
+            O dinheiro passa por 3 estágios: <strong>empenhado</strong> (o que
+            foi destinado — o mais próximo de "proposto"), <strong>liquidado</strong>
+            (comprovadamente entregue) e <strong>pago</strong> (o que de fato
+            saiu do caixa do governo — o mais próximo de "executado"). A
+            <strong>taxa de execução</strong> abaixo é pago ÷ empenhado: quanto
+            do que foi prometido realmente virou entrega.
+          </p>
+          <p class="secao-descricao">
+            <strong>Nem todo autor é uma pessoa</strong> — bancadas estaduais e
+            comissões também propõem emendas coletivas. Por padrão mostramos só
+            emendas individuais (que mapeiam a um parlamentar específico); use o
+            filtro abaixo pra incluir as coletivas.
+          </p>
+        </div>
+      </div>
+
+      <div class="kpi-grade" id="kpi-grade-emendas">
+        <!-- preenchido via JS: js/app.js -> renderizarKPIsEmendas() -->
+      </div>
+
+      <div class="linha-filtros" role="group" aria-label="Filtro de tipo de emenda">
+        <label class="filtro filtro-checkbox">
+          <input type="checkbox" id="filtro-so-individual" checked />
+          <span>Mostrar só emendas individuais (não bancada/comissão)</span>
+        </label>
+      </div>
+
+      <h3 class="titulo-menor">Top 15 por valor empenhado: empenhado x pago</h3>
+      <div class="grafico-cartao">
+        <canvas id="grafico-parlamentares" role="img" aria-label="Gráfico de barras comparando valor empenhado e valor pago por autor de emenda"></canvas>
+      </div>
+      <p class="nota-grafico" id="nota-parlamentares"></p>
+
+      <h3 class="titulo-menor">Todos os autores — clique numa coluna pra ordenar</h3>
+      <p class="secao-descricao">
+        Por exemplo, clique em "Taxa de execução" pra ver quem menos entrega
+        do que propõe primeiro.
+      </p>
+      <div class="tabela-wrapper" id="tabela-parlamentares-wrapper">
+        <table class="tabela-dados tabela-ordenavel" id="tabela-parlamentares">
+          <thead>
+            <tr>
+              <th data-chave="nome">Autor</th>
+              <th data-chave="tipo_emenda">Tipo</th>
+              <th data-chave="valor_empenhado" data-ordem="desc">Empenhado</th>
+              <th data-chave="valor_pago">Pago</th>
+              <th data-chave="valor_resto_cancelado">Cancelado</th>
+              <th data-chave="taxa_execucao">Taxa de execução</th>
+              <th data-chave="numero_emendas">Emendas</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
   </main>
 
   <footer class="rodape">
     <p>
       Fonte dos dados: <a href="https://portaldatransparencia.gov.br/api-de-dados" target="_blank" rel="noopener">
-      API de Dados do Portal da Transparência</a> (endpoint <code>/convenios</code>),
-      Governo Federal do Brasil.
+      API de Dados do Portal da Transparência</a> (endpoints <code>/convenios</code> e
+      <code>/emendas</code>), Governo Federal do Brasil.
     </p>
     <p>
-      Isto cobre apenas <strong>convênios</strong> — um entre vários
-      instrumentos de repasse do governo (existem outros, como transferências
-      constitucionais e emendas parlamentares, que não estão aqui). Não é o
-      gasto público total.
+      Isto cobre <strong>convênios</strong> e <strong>emendas parlamentares</strong> —
+      dois entre vários instrumentos de repasse do governo (existem outros,
+      como transferências constitucionais). Não é o gasto público total.
+    </p>
+    <p>
+      A API não fornece um identificador único por parlamentar, só o nome —
+      então o ranking de emendas agrupa por nome do autor. Na prática, nomes
+      de deputados/senadores federais raramente colidem, mas é uma limitação
+      da fonte de dados, não uma garantia absoluta de unicidade.
     </p>
     <p>
       Pipeline e código-fonte 100% abertos:
