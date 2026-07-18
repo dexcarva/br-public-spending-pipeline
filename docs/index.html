@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pra Onde Vai — Gastos do Governo Federal em Convênios</title>
+  <meta
+    name="description"
+    content="Painel gratuito e público dos convênios do Governo Federal com estados e municípios, atualizado automaticamente a partir do Portal da Transparência."
+  />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <!--
+    Este arquivo só monta a ESTRUTURA da página (o "esqueleto" HTML). Nenhum
+    número aqui é digitado à mão: todo conteúdo dinâmico (KPIs, gráficos,
+    tabelas) é preenchido pelo js/app.js em tempo de carregamento, lendo os
+    arquivos JSON gerados pelo pipeline (transform/export/export_static_json.py).
+    Se abrir este HTML direto (duplo-clique, file://), os gráficos NÃO vão
+    aparecer — navegadores bloqueiam fetch() de arquivos locais por segurança.
+    Para testar localmente, sirva a pasta com `python -m http.server` (ver
+    README.md).
+  -->
+
+  <header class="topo">
+    <div class="topo-conteudo">
+      <p class="selo">dado público · atualização automática · 100% gratuito</p>
+      <h1>Pra onde vai o dinheiro dos convênios federais?</h1>
+      <p class="subtitulo">
+        Todo convênio que o Governo Federal assina com estados e municípios é
+        dado público. Este painel baixa, organiza e atualiza esses números
+        automaticamente — sem custo, sem cadastro, sem instalar nada — pra
+        qualquer pessoa acompanhar.
+      </p>
+      <p class="meta-atualizacao" id="meta-atualizacao">carregando dados…</p>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- Linha de KPIs: os "números-resumo" que qualquer visitante lê em 5 segundos. -->
+    <section aria-label="Indicadores gerais" class="secao">
+      <div class="kpi-grade" id="kpi-grade">
+        <!-- preenchido via JS: js/app.js -> renderizarKPIs() -->
+      </div>
+    </section>
+
+    <!-- Ranking de órgãos: "quem manda mais dinheiro". -->
+    <section class="secao" aria-labelledby="titulo-orgaos">
+      <div class="secao-cabecalho">
+        <div>
+          <h2 id="titulo-orgaos">Ranking por órgão superior</h2>
+          <p class="secao-descricao">
+            Os 15 órgãos do Governo Federal que mais repassaram dinheiro via
+            convênios no período. Passe o mouse (ou o dedo) numa barra pra
+            ver o valor exato.
+          </p>
+        </div>
+        <button type="button" class="botao-tabela" data-alvo="orgaos">
+          ver como tabela
+        </button>
+      </div>
+      <div class="grafico-cartao">
+        <canvas id="grafico-orgaos" role="img" aria-label="Gráfico de barras do ranking de órgãos por valor total repassado"></canvas>
+      </div>
+      <div class="tabela-wrapper oculto" id="tabela-orgaos-wrapper">
+        <table class="tabela-dados" id="tabela-orgaos">
+          <thead>
+            <tr><th>Órgão superior</th><th>Valor total</th><th>Convênios</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Série temporal: "quando o dinheiro saiu". -->
+    <section class="secao" aria-labelledby="titulo-serie">
+      <div class="secao-cabecalho">
+        <div>
+          <h2 id="titulo-serie">Evolução mensal</h2>
+          <p class="secao-descricao">
+            Soma do valor dos convênios publicados a cada mês.
+          </p>
+        </div>
+      </div>
+      <div class="grafico-cartao">
+        <canvas id="grafico-serie" role="img" aria-label="Gráfico de linha da evolução mensal do valor total de convênios"></canvas>
+      </div>
+    </section>
+
+    <!-- Ranking de municípios: com filtro região -> UF -> município. -->
+    <section class="secao" aria-labelledby="titulo-municipios">
+      <div class="secao-cabecalho">
+        <div>
+          <h2 id="titulo-municipios">Ranking por município</h2>
+          <p class="secao-descricao">
+            Os filtros abaixo afetam <strong>só esta seção</strong> — os
+            números de órgãos e a evolução mensal acima já são o total
+            nacional consolidado.
+          </p>
+        </div>
+        <button type="button" class="botao-tabela" data-alvo="municipios">
+          ver como tabela
+        </button>
+      </div>
+
+      <div class="linha-filtros" role="group" aria-label="Filtros de localização">
+        <label class="filtro">
+          <span>Região</span>
+          <select id="filtro-regiao">
+            <option value="">Todas</option>
+          </select>
+        </label>
+        <label class="filtro">
+          <span>UF</span>
+          <select id="filtro-uf">
+            <option value="">Todas</option>
+          </select>
+        </label>
+        <label class="filtro">
+          <span>Município</span>
+          <select id="filtro-municipio">
+            <option value="">Todos</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="grafico-cartao">
+        <canvas id="grafico-municipios" role="img" aria-label="Gráfico de barras do ranking de municípios por valor total recebido"></canvas>
+      </div>
+      <p class="nota-grafico" id="nota-municipios"></p>
+      <div class="tabela-wrapper oculto" id="tabela-municipios-wrapper">
+        <table class="tabela-dados" id="tabela-municipios">
+          <thead>
+            <tr><th>Município</th><th>UF</th><th>Região</th><th>Valor total</th><th>Convênios</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="rodape">
+    <p>
+      Fonte dos dados: <a href="https://portaldatransparencia.gov.br/api-de-dados" target="_blank" rel="noopener">
+      API de Dados do Portal da Transparência</a> (endpoint <code>/convenios</code>),
+      Governo Federal do Brasil.
+    </p>
+    <p>
+      Isto cobre apenas <strong>convênios</strong> — um entre vários
+      instrumentos de repasse do governo (existem outros, como transferências
+      constitucionais e emendas parlamentares, que não estão aqui). Não é o
+      gasto público total.
+    </p>
+    <p>
+      Pipeline e código-fonte 100% abertos:
+      <a href="https://github.com/dexcarva/br-public-spending-pipeline" target="_blank" rel="noopener">github.com/dexcarva/br-public-spending-pipeline</a>.
+      Dados atualizados automaticamente, sem intervenção manual.
+    </p>
+  </footer>
+
+  <!-- Chart.js via CDN, versão fixada de propósito: evita que o site quebre
+       silenciosamente se uma versão nova mudar a API sem aviso. -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="js/app.js" defer></script>
+</body>
+</html>

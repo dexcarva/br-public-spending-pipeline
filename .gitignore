@@ -1,0 +1,27 @@
+# Dados brutos baixados da API e o banco DuckDB gerado a partir deles.
+# Por design, esses arquivos NUNCA entram no git: são recriados do zero em
+# toda execução do pipeline (local ou no GitHub Actions), então versioná-los
+# só inflaria o histórico do repositório sem necessidade. O que fica versionado
+# são apenas os JSON pequenos e já agregados em docs/data/.
+data/raw/
+data/*.duckdb
+data/*.duckdb.wal
+*.duckdb
+
+# Segredos locais (chave da API), nunca comitar.
+.env
+
+# Checklist de trabalho pessoal — fica só local, não vai pro repositório público.
+next_steps.md
+
+# Artefatos do dbt.
+transform/target/
+transform/logs/
+transform/dbt_packages/
+transform/.user.yml
+
+# Python.
+__pycache__/
+*.pyc
+.venv/
+venv/

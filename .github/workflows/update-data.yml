@@ -1,0 +1,90 @@
+# Este workflow É o "Airflow" deste projeto: em vez de um orquestrador
+# rodando 24h numa máquina (que custaria dinheiro e precisaria de
+# manutenção), usamos o cron nativo do GitHub Actions — que só liga a
+# máquina pelos ~2 minutos que o job leva, de graça em repositórios públicos.
+#
+# O fluxo é sempre o mesmo 4 passos do pipeline, na ordem:
+#   1. ingestão  (ingestion/extract_convenios.py)   -> baixa o dado bruto da API
+#   2. dbt build (transform/)                        -> transforma em dim/fato + testa qualidade
+#   3. export    (transform/export/export_static_json.py) -> gera os JSON pro site
+#   4. commit    dos JSON alterados de volta pro repositório
+#
+# Depois do passo 4, quem publica o site é o próprio GitHub Pages, configurado
+# (nas Settings do repositório) pra servir a pasta docs/ da branch main — ele
+# republica sozinho sempre que esses arquivos mudam, sem precisar de mais
+# nenhum passo de "deploy" aqui.
+
+name: Atualizar dados de convênios
+
+on:
+  schedule:
+    # Toda segunda-feira às 06:17 UTC (03:17 no horário de Brasília).
+    # O minuto "quebrado" (17, não 00) é de propósito: milhares de workflows
+    # no GitHub tentam rodar exatamente em horas cheias, o que atrasa a fila
+    # de execução — um horário fora de hora costuma rodar mais na hora certa.
+    - cron: "17 6 * * 1"
+  # Permite disparar manualmente pela aba "Actions" do GitHub — essencial
+  # pra rodar o pipeline pela primeira vez, sem esperar até segunda-feira.
+  workflow_dispatch: {}
+
+# Evita duas execuções desse workflow rodando ao mesmo tempo (ex.: alguém
+# clica "rodar agora" enquanto o cron semanal também dispara) — a segunda
+# cancela a primeira em vez de as duas tentarem commitar juntas.
+concurrency:
+  group: atualizar-dados
+  cancel-in-progress: true
+
+permissions:
+  # "write" pra poder commitar os JSON atualizados de volta na branch main.
+  contents: write
+
+jobs:
+  atualizar-dados:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Baixar o código do repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: 1. Ingestão — baixar convênios da API do Portal da Transparência
+        env:
+          PORTAL_TRANSPARENCIA_API_KEY: ${{ secrets.PORTAL_TRANSPARENCIA_API_KEY }}
+        run: python ingestion/extract_convenios.py
+
+      - name: 2. Transformação — rodar models e testes do dbt
+        working-directory: transform
+        run: dbt build --profiles-dir .
+
+      - name: 3. Export — gerar os JSON estáticos que o site consome
+        run: python transform/export/export_static_json.py
+
+      - name: 4. Publicar — commitar os JSON atualizados
+        run: |
+          # Identidade do "autor" do commit automático — não é uma conta de
+          # verdade, é a identidade padrão que o GitHub reserva pra commits
+          # feitos por Actions.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add docs/data/
+
+          # Se a janela de datas não trouxe nenhum dado novo em relação à
+          # última execução, os JSON exportados saem idênticos aos que já
+          # estão no repositório — `git diff --staged --quiet` detecta esse
+          # caso e a gente pula o commit, em vez de criar um commit vazio
+          # toda semana só por rodar o workflow.
+          if git diff --staged --quiet; then
+            echo "Nenhuma mudança nos dados — nada para commitar."
+          else
+            git commit -m "chore: atualiza dados de convênios ($(date -u +%Y-%m-%d))"
+            git push
+          fi

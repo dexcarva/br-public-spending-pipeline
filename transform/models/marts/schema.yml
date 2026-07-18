@@ -1,0 +1,62 @@
+# "Data contract": em vez de confiar que o pipeline sempre vai gerar dado
+# correto, declaramos aqui as regras que TÊM que ser verdade — e o `dbt test`
+# falha (barulhentamente, no log do GitHub Actions) se alguma delas quebrar.
+# Isso é o que separa um pipeline "que parece funcionar" de um que você
+# realmente confia.
+
+version: 2
+
+models:
+  - name: dim_municipio
+    description: >
+      Um município por linha (dimensão geográfica). A chave primária é uma
+      surrogate key gerada a partir do código IBGE.
+    columns:
+      - name: sk_municipio
+        description: Chave primária (surrogate key) da dimensão.
+        data_tests:
+          - unique
+          - not_null
+      - name: codigo_ibge
+        description: Código IBGE do município (chave natural, vinda da API).
+        data_tests:
+          - unique
+          - not_null
+
+  - name: dim_orgao_superior
+    description: >
+      Um órgão superior do Governo Federal por linha (ex.: um Ministério).
+    columns:
+      - name: sk_orgao_superior
+        description: Chave primária (surrogate key) da dimensão.
+        data_tests:
+          - unique
+          - not_null
+      - name: codigo_orgao_superior
+        description: Código SIAFI do órgão superior (chave natural).
+        data_tests:
+          - unique
+          - not_null
+
+  - name: fct_convenios
+    description: >
+      Uma linha por convênio publicado pelo Governo Federal, com as métricas
+      financeiras e as chaves estrangeiras pras dimensões de município e
+      órgão superior.
+    columns:
+      - name: id_convenio
+        description: Identificador do convênio na fonte original.
+        data_tests:
+          - not_null
+      - name: sk_municipio
+        description: Chave estrangeira para dim_municipio.
+        data_tests:
+          - not_null
+      - name: sk_orgao_superior
+        description: Chave estrangeira para dim_orgao_superior.
+        data_tests:
+          - not_null
+      - name: valor
+        description: Valor total do convênio, em reais.
+        data_tests:
+          - not_null

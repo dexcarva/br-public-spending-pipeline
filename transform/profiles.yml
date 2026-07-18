@@ -1,0 +1,20 @@
+# Normalmente o profiles.yml (que diz AO DBT COMO se conectar ao banco) fica
+# fora do projeto, em ~/.dbt/profiles.yml, separado do código porque costuma
+# ter senha de banco de produção. Aqui não existe segredo nenhum — é só um
+# caminho de arquivo local — então deixamos o profiles.yml dentro do próprio
+# projeto (transform/), versionado no git, pra rodar igual em qualquer máquina
+# e no GitHub Actions sem nenhuma configuração extra de ambiente.
+#
+# Rode os comandos dbt sempre de dentro da pasta transform/ (ex.: `cd
+# transform && dbt run`), porque os caminhos abaixo são relativos a essa
+# pasta.
+br_public_spending:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      # Um arquivo .duckdb É o banco inteiro — não tem processo de servidor
+      # rodando, não tem porta, não tem usuário/senha. "Conectar" no DuckDB é
+      # só abrir esse arquivo, do mesmo jeito que abrir um .sqlite.
+      path: "{{ env_var('DBT_DUCKDB_PATH', '../data/warehouse.duckdb') }}"
+      threads: 4

@@ -1,0 +1,283 @@
+/*
+  Paleta de cores: usamos os valores JÁ VALIDADOS do design system de
+  visualização de dados do Claude (skill "dataviz"), em vez de escolher cores
+  no olho. Cada hex aqui tem um papel fixo (superfície, texto primário, texto
+  secundário, a cor "sequencial" azul pros gráficos de magnitude) — nunca
+  reaproveitamos a mesma cor pra dois papéis diferentes, isso é o que evita
+  gráfico ilegível pra quem tem daltonismo, por exemplo.
+*/
+:root {
+  color-scheme: light;
+  --superficie: #fcfcfb;
+  --plano-pagina: #f9f9f7;
+  --texto-primario: #0b0b0b;
+  --texto-secundario: #52514e;
+  --texto-mudo: #898781;
+  --linha-grade: #e1e0d9;
+  --eixo: #c3c2b7;
+  --borda: rgba(11, 11, 11, 0.1);
+  --serie-azul: #2a78d6;
+  --serie-azul-fraca: #9ec5f4;
+  --sucesso: #006300;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --superficie: #1a1a19;
+    --plano-pagina: #0d0d0d;
+    --texto-primario: #ffffff;
+    --texto-secundario: #c3c2b7;
+    --texto-mudo: #898781;
+    --linha-grade: #2c2c2a;
+    --eixo: #383835;
+    --borda: rgba(255, 255, 255, 0.1);
+    --serie-azul: #3987e5;
+    --serie-azul-fraca: #184f95;
+    --sucesso: #0ca30c;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--plano-pagina);
+  color: var(--texto-primario);
+  line-height: 1.5;
+}
+
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+.topo {
+  background: var(--superficie);
+  border-bottom: 1px solid var(--borda);
+  padding: 40px 20px 32px;
+  margin-bottom: 32px;
+}
+
+.topo-conteudo {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.selo {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--texto-mudo);
+  margin: 0 0 12px;
+}
+
+.topo h1 {
+  font-size: clamp(28px, 4vw, 40px);
+  margin: 0 0 12px;
+  max-width: 20ch;
+}
+
+.subtitulo {
+  color: var(--texto-secundario);
+  max-width: 60ch;
+  font-size: 16px;
+  margin: 0 0 16px;
+}
+
+.meta-atualizacao {
+  font-size: 13px;
+  color: var(--texto-mudo);
+  margin: 0;
+}
+
+.secao {
+  margin-bottom: 48px;
+}
+
+.secao-cabecalho {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.secao-cabecalho h2 {
+  margin: 0 0 6px;
+  font-size: 22px;
+}
+
+.secao-descricao {
+  margin: 0;
+  color: var(--texto-secundario);
+  font-size: 14px;
+  max-width: 65ch;
+}
+
+/* ---- KPIs: um "stat tile" por indicador, com label + valor grande. ---- */
+.kpi-grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.kpi-cartao {
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+
+.kpi-rotulo {
+  font-size: 13px;
+  color: var(--texto-secundario);
+  margin: 0 0 6px;
+}
+
+.kpi-valor {
+  font-size: 26px;
+  font-weight: 600;
+  margin: 0;
+  /* Números grandes usam algarismos proporcionais (o padrão da fonte), não
+     tabulares -- tabular-nums é só pra colunas de tabela que precisam
+     alinhar, aqui deixaria o número com um ar "solto". */
+}
+
+.kpi-detalhe {
+  font-size: 12px;
+  color: var(--texto-mudo);
+  margin: 4px 0 0;
+}
+
+/* ---- Cartões de gráfico ---- */
+.grafico-cartao {
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: 10px;
+  padding: 20px;
+  position: relative;
+}
+
+.grafico-cartao canvas {
+  max-height: 420px;
+}
+
+.nota-grafico {
+  font-size: 13px;
+  color: var(--texto-mudo);
+  margin: 8px 2px 0;
+}
+
+/* ---- Filtros: uma linha só, acima do que eles afetam (aqui, só a seção de municípios). ---- */
+.linha-filtros {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.filtro {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--texto-secundario);
+}
+
+.filtro select {
+  font: inherit;
+  font-size: 14px;
+  color: var(--texto-primario);
+  background: var(--superficie);
+  border: 1px solid var(--eixo);
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-width: 180px;
+}
+
+/* ---- Botão "ver como tabela" (acessibilidade: dado sempre disponível fora do gráfico). ---- */
+.botao-tabela {
+  font: inherit;
+  font-size: 13px;
+  color: var(--texto-primario);
+  background: transparent;
+  border: 1px solid var(--eixo);
+  border-radius: 6px;
+  padding: 7px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.botao-tabela:hover {
+  border-color: var(--serie-azul);
+  color: var(--serie-azul);
+}
+
+/* ---- Tabelas de dados (a alternativa acessível a todo gráfico). ---- */
+.tabela-wrapper {
+  margin-top: 16px;
+  overflow-x: auto;
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: 10px;
+}
+
+.tabela-wrapper.oculto {
+  display: none;
+}
+
+.tabela-dados {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.tabela-dados th,
+.tabela-dados td {
+  text-align: left;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--linha-grade);
+  white-space: nowrap;
+}
+
+.tabela-dados td:not(:first-child),
+.tabela-dados th:not(:first-child) {
+  /* Colunas numéricas alinham à direita e usam algarismos tabulares -- aqui
+     sim, porque são colunas que precisam alinhar verticalmente. */
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tabela-dados tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.rodape {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 20px 60px;
+  font-size: 13px;
+  color: var(--texto-mudo);
+}
+
+.rodape p {
+  margin: 0 0 10px;
+}
+
+.rodape a {
+  color: var(--serie-azul);
+}
+
+@media (max-width: 640px) {
+  .secao-cabecalho {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

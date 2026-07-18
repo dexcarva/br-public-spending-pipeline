@@ -1,0 +1,42 @@
+# Arquivo de configuração raiz do dbt. Todo projeto dbt precisa de um.
+#
+# O que é dbt, resumindo: uma ferramenta que deixa você escrever transformação
+# de dados como SELECTs em SQL (chamados de "models"), e ela cuida de rodar
+# esses SELECTs na ordem certa, criar as tabelas/views no banco, testar a
+# qualidade dos dados e documentar tudo — sem você escrever CREATE TABLE,
+# controle de dependência ou orquestração na mão.
+name: br_public_spending
+version: "1.0.0"
+config-version: 2
+
+# Precisa bater com o nome do profile em profiles.yml (é o profiles.yml que
+# diz PARA QUAL banco o dbt vai mandar o SQL — no nosso caso, um arquivo
+# DuckDB local, sem servidor).
+profile: br_public_spending
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+# Caminho do arquivo bruto gerado pelo ingestion/extract_convenios.py.
+# Fica como "var" (em vez de fixo dentro do SQL) pra deixar explícito que é
+# uma dependência externa configurável, não um detalhe escondido do model.
+vars:
+  raw_convenios_path: "../data/raw/convenios.jsonl"
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# Aqui organizamos os models em duas "camadas" (staging e marts), e cada
+# camada vira um schema diferente dentro do arquivo DuckDB — só pra deixar
+# claro, ao consultar o banco, qual dado é "cru só ajustado de tipo" (staging)
+# e qual já é "modelado pra análise" (marts: dimensões + fato).
+models:
+  br_public_spending:
+    staging:
+      +materialized: view
+      +schema: staging
+    marts:
+      +materialized: table
+      +schema: marts
