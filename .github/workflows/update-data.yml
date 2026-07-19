@@ -31,14 +31,12 @@
 name: Atualizar dados de convênios
 
 on:
-  # O cron diário fica DESATIVADO até os secrets do Neon existirem no
-  # repositório (sem eles, a carga falharia todo dia às 6h). Pra ativar,
-  # basta descomentar depois de cadastrar os secrets:
-  # schedule:
-  #   # Diário às 06:17 UTC. O minuto "quebrado" (17, não 00) é de propósito:
-  #   # milhares de workflows disputam as horas cheias no GitHub, e horário
-  #   # fora de hora pega menos fila.
-  #   - cron: "17 6 * * *"
+  schedule:
+    # Diário às 06:17 UTC (03:17 em Brasília). O minuto "quebrado" (17, não
+    # 00) é de propósito: milhares de workflows disputam as horas cheias no
+    # GitHub, e horário fora de hora pega menos fila. Ativado em 2026-07-19,
+    # junto com o cadastro dos secrets do Neon no repositório.
+    - cron: "17 6 * * *"
   workflow_dispatch:
     # Disparo manual COM janela opcional = mecanismo de BACKFILL: pra
     # carregar um período histórico, dispare informando as datas (a carga

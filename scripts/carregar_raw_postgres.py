@@ -146,6 +146,12 @@ def carregar_convenios() -> None:
                 # já tinha a tabela da era truncar-e-recarregar (viram no-op
                 # depois da primeira vez). Pra colunas novas, isso substitui
                 # uma ferramenta de migração formal sem perder segurança.
+                #
+                # O schema também: no compose ele nasce no init-postgres.sql,
+                # mas num Postgres gerenciado virgem (Neon, no fluxo do
+                # GitHub Actions) não existe init — o script se vira sozinho
+                # em qualquer casa.
+                cur.execute("create schema if not exists raw")
                 cur.execute("""
                     create table if not exists raw.convenios (
                         dado          jsonb        not null,
@@ -191,6 +197,8 @@ def carregar_emendas() -> None:
     try:
         with conexao:
             with conexao.cursor() as cur:
+                # (mesmo racional do carregar_convenios: casa nova, schema novo)
+                cur.execute("create schema if not exists raw")
                 cur.execute("""
                     create table if not exists raw.emendas (
                         dado          jsonb        not null,
