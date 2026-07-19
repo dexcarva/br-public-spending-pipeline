@@ -513,6 +513,15 @@ function renderizarGraficoParlamentares(lista) {
       : `Mostrando ${inteiro(lista.length)} autor(es) no filtro atual.`;
 }
 
+// O Brasil tem centenas de autores de emenda ativos por ano (parlamentares +
+// bancadas + comissões) — sem limite, essa tabela facilmente passa de mil
+// linhas e deixa a página inteira pesada e quilométrica. Mostramos só as
+// LIMITE_TABELA_PARLAMENTARES primeiras do critério de ordenação atual; como
+// o cabeçalho é clicável, o visitante controla qual "recorte" de linhas vê
+// (maior empenhado, pior taxa de execução, etc.) em vez de rolar uma lista
+// gigante procurando.
+const LIMITE_TABELA_PARLAMENTARES = 50;
+
 function renderizarTabelaParlamentares(lista) {
   const { chave, direcao } = ordenacaoParlamentares;
   const sinal = direcao === "asc" ? 1 : -1;
@@ -526,7 +535,9 @@ function renderizarTabelaParlamentares(lista) {
     return sinal * (Number(va) - Number(vb));
   });
 
-  preencherTabela("tabela-parlamentares", ordenada, (p) => [
+  const visiveis = ordenada.slice(0, LIMITE_TABELA_PARLAMENTARES);
+
+  preencherTabela("tabela-parlamentares", visiveis, (p) => [
     p.nome,
     p.tipo_emenda,
     moeda(p.valor_empenhado, { compacta: false }),
@@ -543,6 +554,12 @@ function renderizarTabelaParlamentares(lista) {
       th.removeAttribute("data-ordem");
     }
   });
+
+  const nota = document.getElementById("nota-tabela-parlamentares");
+  nota.textContent =
+    ordenada.length > visiveis.length
+      ? `Mostrando os ${visiveis.length} primeiros de ${inteiro(ordenada.length)} autores, ordenado pela coluna selecionada.`
+      : `Mostrando ${inteiro(visiveis.length)} autor(es).`;
 }
 
 function atualizarEmendas() {

@@ -77,3 +77,15 @@ select * from renomeado
 -- seguintes.
 where municipio_codigo_ibge is not null
   and orgao_superior_codigo is not null
+  -- DESCOBERTA testando contra a API real: o filtro dataInicial/dataFinal do
+  -- endpoint /convenios parece valer sobre a data de ÚLTIMA ATUALIZAÇÃO do
+  -- registro, não sobre a data de publicação — uma janela de ingestão de
+  -- poucos dias trouxe convênios com data_publicacao de 1996 (que só tiveram
+  -- alguma movimentação recente, tipo uma liberação de parcela). Isso faz
+  -- sentido pro caso de uso "acompanhar liberações recentes de convênios
+  -- antigos", mas quebraria o gráfico de evolução mensal (décadas de meses
+  -- quase vazios) e distorceria os rankings com ruído histórico. Por isso
+  -- restringimos aqui à publicação nos últimos ~3 anos — gera folga
+  -- confortável acima de qualquer janela de ingestão configurada em
+  -- extract_convenios.py, mas descarta o ruído claramente antigo.
+  and data_publicacao >= current_date - interval '3 years'

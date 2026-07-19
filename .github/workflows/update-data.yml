@@ -41,7 +41,11 @@ permissions:
 jobs:
   atualizar-dados:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Testando contra a API real, um único dia recente já pode trazer muito
+    # mais convênios do que dias mais antigos (parece refletir "última
+    # atualização do registro", não só convênios novos) — 30 minutos se
+    # mostrou justo demais pra janela padrão de 3 meses. 60 dá folga.
+    timeout-minutes: 60
     steps:
       - name: Baixar o código do repositório
         uses: actions/checkout@v4
