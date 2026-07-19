@@ -1,13 +1,20 @@
 # Dependências do pipeline (ingestão + transformação).
 # Propositalmente enxuto: cada lib aqui tem um motivo claro, sem "porque sim".
 #
-# requests     -> chamar a API REST do Portal da Transparência.
-# duckdb       -> banco analítico embarcado (roda dentro do processo Python,
-#                 sem precisar instalar/configurar um servidor de banco).
-# dbt-core     -> motor de transformação SQL (staging -> dimensões -> fato).
-# dbt-duckdb   -> "adapter" que ensina o dbt a falar com o DuckDB em vez de
-#                 um banco tradicional como Postgres/Snowflake/BigQuery.
+# requests        -> chamar a API REST do Portal da Transparência.
+# duckdb          -> banco analítico embarcado (roda dentro do processo
+#                    Python, sem servidor) — o target "dev" do dbt, pra
+#                    desenvolver 100% local sem subir nada.
+# dbt-core        -> motor de transformação SQL (staging -> dimensões -> fato).
+# dbt-duckdb      -> adapter que ensina o dbt a falar com o DuckDB.
+# dbt-postgres    -> adapter do target "postgres" (o MESMO target serve o
+#                    Postgres do docker-compose e o Neon que o GitHub Actions
+#                    usa — ver transform/profiles.yml).
+# psycopg2-binary -> driver Postgres dos scripts de carga/publicação
+#                    (carregar_raw_postgres.py, publicar_site.py).
 requests==2.32.3
 duckdb==1.1.3
 dbt-core==1.8.9
 dbt-duckdb==1.8.4
+dbt-postgres==1.8.2
+psycopg2-binary==2.9.9

@@ -1,0 +1,322 @@
+# =============================================================================
+# Stack local "de livro-texto": Postgres + Airflow 3 + Streamlit, tudo em Docker.
+#
+# POR QUE essa stack existe se o site estático já funciona: dois motivos.
+#   1. PRÁTICO — descobrimos em produção que o volume real da API estoura o
+#      timeout do GitHub Actions (uma janela de 14 dias trouxe ~12.000
+#      convênios e levou 48min). Rodando local, não existe timeout.
+#   2. PORTFÓLIO — Docker/Airflow/Postgres/Streamlit é a stack que aparece em
+#      avaliação técnica de engenharia de dados; o site estático continua
+#      sendo a vitrine pública, e esta stack vira a "cozinha" onde o dado
+#      pesado é processado.
+#
+# A PONTE entre os dois mundos é um único ponto: scripts/publicar_site.py
+# escreve os MESMOS docs/data/*.json que o site estático consome — depois de
+# rodar a DAG, um `git add docs/data && git commit && git push` publica o
+# resultado. Nenhum outro acoplamento existe entre a stack Docker e o site.
+#
+# SOBRE A VERSÃO DO AIRFLOW: usamos o Airflow 3 (série atual desde 2025), cuja
+# arquitetura mudou de verdade em relação ao 2.x — e o desenho abaixo reflete
+# isso:
+#   - o "webserver" virou API-SERVER: a UI (React) e a API REST são servidas
+#     pelo mesmo processo, e as tasks em execução falam com ele via API
+#     (Task Execution API) em vez de acessarem o banco de metadados direto —
+#     esse desacoplamento é a mudança central do Airflow 3;
+#   - o parse dos DAGs saiu do scheduler e virou um processo próprio, o
+#     DAG-PROCESSOR (obrigatório): um DAG com bug de sintaxe não derruba nem
+#     atrapalha mais o agendamento de quem já está rodando;
+#   - não subimos o TRIGGERER de propósito: ele só serve pra operadores
+#     "deferrable" (tasks que dormem esperando evento externo sem ocupar
+#     slot), e esta DAG não usa nenhum — subir seria container parado à toa.
+#
+# COMO SUBIR (depois de instalar o Docker Desktop):
+#   docker compose up -d --build
+#   Airflow UI:   http://localhost:8080  (usuário: admin / senha: admin)
+#   Streamlit:    http://localhost:8501
+#   Postgres:     localhost:5432 (usuário/senha/db: gastos — só pra inspeção)
+#
+# O arquivo .env na raiz do repositório (que já existe pro site estático, com
+# PORTAL_TRANSPARENCIA_API_KEY) é lido AUTOMATICAMENTE pelo Docker Compose —
+# toda referência ${VARIAVEL} abaixo vem de lá ou do ambiente do shell.
+# =============================================================================
+
+# "Âncora" YAML (&nome / *nome): um recurso do próprio YAML, não do Docker —
+# declara um bloco reutilizável uma vez e o injeta em vários serviços. Sem
+# isso, a configuração do Airflow (imagem, env vars, volumes) ficaria copiada
+# e colada em api-server, scheduler, dag-processor e init — e um ajuste feito
+# num deles seria esquecido nos outros (mesmo motivo de portal_transparencia.py
+# ser um módulo compartilhado na ingestão).
+x-airflow-comum: &airflow-comum
+  build:
+    # A imagem do Airflow é customizada (docker/airflow/Dockerfile) porque a
+    # imagem oficial não traz nossas dependências (requests, psycopg2, dbt).
+    context: ./docker/airflow
+  environment:
+    # LocalExecutor: executa as tasks em subprocessos do próprio scheduler —
+    # paralelismo real numa máquina só, sem a complexidade de Celery/K8s
+    # (que só compensam quando existe um cluster de workers de verdade).
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    # O Airflow guarda seu próprio estado (DAGs, execuções, logs de task) num
+    # banco de METADADOS — que é um banco separado (airflow) dentro do MESMO
+    # container Postgres dos dados, pra não subir dois servidores de banco.
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://gastos:${POSTGRES_PASSWORD:-gastos}@postgres:5432/airflow
+    # No Airflow 3 o gerenciador de autenticação da UI virou plugável, e o
+    # padrão novo (SimpleAuthManager) gera senhas aleatórias em arquivo. Pra
+    # um lab local, o FAB auth manager (o mesmo do Airflow 2, distribuído
+    # como provider e incluído na imagem oficial) mantém o clássico
+    # usuário/senha fixos criados pelo airflow-init logo abaixo.
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    # A mudança central do Airflow 3 em ação: TODA task em execução conversa
+    # com o api-server por HTTP (buscar contexto, reportar estado, escrever
+    # XCom) em vez de abrir conexão direta no banco de metadados como no 2.x.
+    # Esta URL diz às tasks onde ele está — "airflow-apiserver" é o DNS do
+    # serviço na rede interna do Compose.
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-apiserver:8080/execution/"
+    # Os tokens dessa conversa task<->api-server são JWT assinados com este
+    # segredo. Valor fixo e público AQUI porque tudo vive na rede interna do
+    # Compose na sua máquina — em produção seria um segredo de verdade,
+    # rotacionado, vindo de um gerenciador (mesma ressalva da senha do
+    # Postgres lá embaixo).
+    AIRFLOW__API_AUTH__JWT_SECRET: segredo-local-do-laboratorio
+    # Sem os DAGs de exemplo que vêm de fábrica — só poluiriam a UI.
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    # Sem buffer no stdout do Python: rodando como subprocesso (sem
+    # terminal), o Python acumula ~8KB de prints antes de soltar — na
+    # prática, o log da task no Airflow ficava MUDO por vários minutos
+    # durante a ingestão longa e despejava tudo de uma vez no fim.
+    # Descoberto observando a primeira run cheia; com isso aqui, cada
+    # "página X: +15 convênios" aparece na UI na hora que acontece.
+    PYTHONUNBUFFERED: "1"
+    # Agendamentos (@daily etc.) interpretados no fuso de Brasília, não UTC —
+    # evita a clássica confusão de "rodou 3 horas antes do combinado".
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: America/Sao_Paulo
+    # --- Variáveis consumidas pelos NOSSOS scripts (não pelo Airflow) ------
+    # Chave da API do Portal da Transparência: vem do .env da raiz (o mesmo
+    # usado pra rodar a ingestão fora do Docker). Nunca escreva a chave aqui.
+    PORTAL_TRANSPARENCIA_API_KEY: ${PORTAL_TRANSPARENCIA_API_KEY}
+    # Conexão dos scripts Python (carregar_raw_postgres.py, publicar_site.py)
+    # e do dbt (profiles.yml, target "postgres") com o banco de DADOS. O host é
+    # "postgres" porque, na rede interna do Compose, o NOME DO SERVIÇO é o
+    # hostname — DNS entre containers é automático.
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    POSTGRES_DB: gastos
+    POSTGRES_USER: gastos
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gastos}
+    # Janela de ingestão: vazio = os scripts usam o padrão deles (últimos 3
+    # meses / 3 anos). Defina no .env pra testar com janela pequena — ex.:
+    # CONVENIOS_DATA_INICIAL=01/06/2026 e CONVENIOS_DATA_FINAL=28/06/2026 —
+    # sem tocar em nenhum código.
+    CONVENIOS_DATA_INICIAL: ${CONVENIOS_DATA_INICIAL:-}
+    CONVENIOS_DATA_FINAL: ${CONVENIOS_DATA_FINAL:-}
+    EMENDAS_ANOS: ${EMENDAS_ANOS:-}
+  volumes:
+    # DAGs montados (não copiados na imagem): editar um .py em airflow/dags/
+    # aparece no Airflow em segundos (quem observa é o dag-processor), sem
+    # rebuild — o ciclo de desenvolvimento de DAG fica do tamanho de um
+    # "salvar arquivo".
+    - ./airflow/dags:/opt/airflow/dags
+    # O repositório inteiro montado em /opt/pipeline: é assim que as tasks
+    # enxergam ingestion/, transform/, scripts/ e escrevem em data/ e
+    # docs/data/ — os arquivos gerados aparecem DIRETO na sua máquina, prontos
+    # pro `git add docs/data`.
+    - ./:/opt/pipeline
+    # Logs de execução das tasks num volume nomeado (não no repositório):
+    # são artefatos de runtime, como transform/logs/ já é no .gitignore.
+    - logs-airflow:/opt/airflow/logs
+  depends_on:
+    postgres:
+      # Não basta o container ter subido — o Postgres precisa estar ACEITANDO
+      # conexão (healthcheck abaixo). Sem isso, o Airflow tenta conectar no
+      # banco de metadados antes da hora e morre em loop de restart.
+      condition: service_healthy
+
+services:
+  # ---------------------------------------------------------------------------
+  # O banco: um único Postgres 15 com DOIS papéis bem separados:
+  #   banco "gastos"  -> nossos dados (schema raw + schemas do dbt)
+  #   banco "airflow" -> metadados do orquestrador
+  # Em produção de verdade seriam instâncias separadas (o Airflow martelando o
+  # banco de metadados não deveria competir com queries analíticas), mas num
+  # laptop um servidor só é o equilíbrio certo entre realismo e praticidade.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: gastos
+      # Senha com default "gastos" pra stack subir sem configuração nenhuma.
+      # É aceitável AQUI porque o banco só existe na rede interna do Compose e
+      # no localhost do desenvolvedor — em qualquer ambiente exposto, a senha
+      # viria de um gerenciador de segredos, nunca de um default em YAML.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gastos}
+      POSTGRES_DB: gastos
+    volumes:
+      # Volume NOMEADO pros dados do Postgres: sobrevive a `docker compose
+      # down` e recreações do container. Sem ele, cada restart apagaria o
+      # warehouse inteiro e o histórico de execuções do Airflow.
+      - dados-postgres:/var/lib/postgresql/data
+      # Scripts em /docker-entrypoint-initdb.d/ rodam UMA vez, na primeira
+      # inicialização do volume (convenção da imagem oficial do Postgres) —
+      # é onde criamos o schema raw e o banco de metadados do Airflow.
+      - ./docker/init-postgres.sql:/docker-entrypoint-initdb.d/init-postgres.sql
+    ports:
+      # Exposto no localhost só por conveniência (espiar o banco com DBeaver/
+      # psql da sua máquina). Os containers NÃO usam essa porta — falam entre
+      # si pela rede interna. Se você já tiver um Postgres local na 5432,
+      # troque o lado esquerdo (ex.: "5433:5432").
+      - "5432:5432"
+    healthcheck:
+      # pg_isready responde "aceito conexões?" — é o que o depends_on dos
+      # outros serviços espera antes de subir.
+      test: ["CMD-SHELL", "pg_isready -U gastos -d gastos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [rede-pipeline]
+
+  # ---------------------------------------------------------------------------
+  # Passo único de inicialização do Airflow. A imagem oficial tem um contrato
+  # de env vars pra isso (em vez de comandos na mão como no 2.x):
+  #   _AIRFLOW_DB_MIGRATE     -> roda "airflow db migrate" (idempotente:
+  #                              aplica só o que falta — inclusive o upgrade
+  #                              de schema 2.x -> 3.x, se o volume veio de
+  #                              uma versão antiga)
+  #   _AIRFLOW_WWW_USER_*     -> cria o usuário admin da UI se não existir
+  # É um serviço separado (que roda e TERMINA) porque dois containers
+  # migrando o banco ao mesmo tempo na primeira subida causariam corrida —
+  # api-server, scheduler e dag-processor só sobem depois que este serviço
+  # completou com sucesso.
+  # ---------------------------------------------------------------------------
+  airflow-init:
+    <<: *airflow-comum
+    # Além do migrate/usuário (feitos pelas env vars _AIRFLOW_* abaixo), o
+    # init cria os POOLS que a DAG referencia — as travas globais de
+    # concorrência (1 slot = "um por vez, não importa de qual run"):
+    #   api_portal_transparencia -> o rate limit da API é por CHAVE; um
+    #     backfill paralelo sem isso disparou 8 extrações simultâneas.
+    #   dbt_warehouse -> dois `dbt run` simultâneos colidem no DROP/CREATE
+    #     das mesmas tabelas (Database Error visto na prática).
+    # `airflow pools set` é idempotente (cria ou atualiza) — re-subir a
+    # stack não quebra nada. Task que referencia pool inexistente fica presa
+    # em "scheduled" pra sempre, por isso os pools nascem AQUI, antes de
+    # qualquer DAG rodar.
+    command:
+      - bash
+      - -c
+      - >-
+        airflow pools set api_portal_transparencia 1
+        "Rate limit da API do Portal e por chave - extracoes em serie mesmo entre runs paralelas"
+        && airflow pools set dbt_warehouse 1
+        "dbt reconstroi as mesmas tabelas - dois dbt run simultaneos colidem no DROP/CREATE"
+    # PEGADINHA DE YAML que vale conhecer: o merge de âncora (<<) só junta as
+    # chaves de PRIMEIRO nível — quando um serviço declara seu próprio
+    # "environment:", ele SUBSTITUI o environment herdado inteiro, não faz
+    # merge campo a campo. Por isso este bloco redeclara as variáveis que o
+    # init precisa (conexão, auth manager) e acrescenta as _AIRFLOW_* de
+    # inicialização — as demais do bloco comum (chave da API, janelas de
+    # ingestão) não fazem sentido num passo que só migra banco e cria usuário.
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://gastos:${POSTGRES_PASSWORD:-gastos}@postgres:5432/airflow
+      AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      AIRFLOW__API_AUTH__JWT_SECRET: segredo-local-do-laboratorio
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: America/Sao_Paulo
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
+    networks: [rede-pipeline]
+
+  # A cara do Airflow 3 (http://localhost:8080): serve a UI nova (React), a
+  # API REST pública E a Task Execution API que as tasks usam por dentro —
+  # no 2.x isso era o "webserver", que só fazia UI.
+  airflow-apiserver:
+    <<: *airflow-comum
+    command: api-server
+    ports:
+      - "8080:8080"
+    healthcheck:
+      # As tasks dependem do api-server (via EXECUTION_API_SERVER_URL), então
+      # o scheduler só deve subir quando ele estiver RESPONDENDO — não apenas
+      # "container criado". A imagem oficial traz curl justamente pra isso.
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [rede-pipeline]
+
+  # O scheduler: decide O QUE rodar QUANDO e, com LocalExecutor, executa as
+  # tasks ele mesmo em subprocessos. No Airflow 3 ele NÃO faz mais o parse
+  # dos DAGs (papel do dag-processor abaixo) nem serve UI — só agenda/executa.
+  airflow-scheduler:
+    <<: *airflow-comum
+    command: scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-apiserver:
+        # Ver o healthcheck do api-server: uma task que dispara antes de ele
+        # aceitar requisições falharia na primeira chamada à Execution API.
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [rede-pipeline]
+
+  # O dag-processor: lê os arquivos em /opt/airflow/dags, executa o Python
+  # deles e grava a versão SERIALIZADA no banco de metadados — é ela que o
+  # scheduler e a UI usam. Processo separado (novidade obrigatória do
+  # Airflow 3): um DAG novo com erro de sintaxe quebra AQUI, visível na UI,
+  # sem nunca derrubar o agendamento das DAGs que já estavam boas.
+  airflow-dag-processor:
+    <<: *airflow-comum
+    command: dag-processor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [rede-pipeline]
+
+  # ---------------------------------------------------------------------------
+  # O painel interativo (http://localhost:8501): a versão "com servidor" do
+  # site estático, lendo direto do Postgres — vê o dado assim que a DAG roda,
+  # sem esperar commit/push/Pages. Container próprio porque as dependências
+  # dele (streamlit, pandas) não têm nada a ver com as do Airflow.
+  # ---------------------------------------------------------------------------
+  streamlit:
+    build:
+      context: ./streamlit_app
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: gastos
+      POSTGRES_USER: gastos
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gastos}
+    ports:
+      - "8501:8501"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [rede-pipeline]
+
+# Rede explícita e nomeada em vez da default do Compose: deixa visível no YAML
+# que TODOS os containers falam entre si por uma rede privada própria — nada
+# aqui depende da rede da sua máquina além das 3 portas publicadas de
+# propósito (8080 UI do Airflow, 8501 Streamlit, 5432 inspeção do banco).
+networks:
+  rede-pipeline:
+
+volumes:
+  dados-postgres:
+  logs-airflow:

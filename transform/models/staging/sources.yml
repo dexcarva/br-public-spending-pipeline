@@ -1,0 +1,27 @@
+# "Sources" do dbt: a declaração formal de onde o dado BRUTO mora — tabelas
+# que o dbt NÃO cria (quem as cria e alimenta é scripts/carregar_raw_postgres.py),
+# mas das quais os models dependem. Declarar em vez de escrever "raw.convenios"
+# solto no SQL compra duas coisas: (1) o dado bruto entra no grafo de linhagem
+# do dbt (dbt docs mostra "raw.convenios -> stg_convenios -> fct_convenios");
+# (2) o nome/schema da origem fica num lugar só — se mudar, muda aqui.
+#
+# Estas sources só são REFERENCIADAS no ramo Postgres dos models de staging
+# (`{% if target.type == 'postgres' %}`). No target DuckDB, a "source" é um
+# arquivo JSONL lido via read_json_auto — arquivo em disco não é tabela, então
+# lá a origem é declarada como var (raw_convenios_path em dbt_project.yml) e
+# este arquivo simplesmente não é usado.
+
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      Dado bruto do Portal da Transparência, carregado do JSONL pelo
+      scripts/carregar_raw_postgres.py (truncar-e-recarregar). Uma coluna
+      JSONB por linha, sem nenhuma transformação — o "como veio da API".
+    schema: raw
+    tables:
+      - name: convenios
+        description: Um convênio por linha, JSON idêntico ao da API em `dado`.
+      - name: emendas
+        description: Uma emenda parlamentar por linha, JSON idêntico ao da API em `dado`.

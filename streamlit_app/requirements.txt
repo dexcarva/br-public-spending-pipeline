@@ -1,0 +1,12 @@
+# Dependências SÓ do painel Streamlit — arquivo separado do requirements.txt
+# da raiz de propósito: o container do Streamlit não precisa de dbt/duckdb, e
+# o mundo do site estático não precisa de streamlit. Cada ambiente instala só
+# o que usa (imagens menores, menos superfície pra conflito de versão).
+#
+# streamlit       -> o framework do painel (o Altair dos gráficos já vem
+#                    como dependência dele, por isso não aparece aqui).
+# pandas          -> DataFrames entre o SQL e os gráficos.
+# psycopg2-binary -> driver Postgres (mesma versão dos outros containers).
+streamlit==1.41.1
+pandas==2.2.3
+psycopg2-binary==2.9.9

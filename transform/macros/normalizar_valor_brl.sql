@@ -11,11 +11,19 @@
     A lógica: se o texto tem vírgula, é formato BR — remove os pontos de
     milhar e troca a vírgula decimal por ponto antes de converter. Se não tem
     vírgula (nem tem valor nenhum), trata como já numérico ou nulo.
+
+    PORTABILIDADE ENTRE BANCOS: este macro roda nos DOIS targets do projeto
+    (DuckDB no "dev", Postgres no "docker") — por isso só usamos funções que
+    existem identicamente nos dois dialetos. O teste "tem vírgula?" era feito
+    com contains(), que é específica do DuckDB (o Postgres não a tem) —
+    trocamos por position(',' in ...) > 0, que é SQL padrão (ANSI) e se
+    comporta igual nos dois. Mesma razão de cast/replace/nullif aqui serem
+    todos SQL "sem sotaque": macro compartilhado não pode ter dialeto.
 #}
 {% macro normalizar_valor_brl(coluna) %}
     case
         when nullif(cast({{ coluna }} as varchar), '') is null then null
-        when contains(cast({{ coluna }} as varchar), ',') then
+        when position(',' in cast({{ coluna }} as varchar)) > 0 then
             cast(
                 replace(replace(cast({{ coluna }} as varchar), '.', ''), ',', '.')
                 as decimal(18, 2)

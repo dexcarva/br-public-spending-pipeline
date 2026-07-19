@@ -332,6 +332,24 @@ main {
   color: var(--serie-azul);
 }
 
+/* Aviso legal: destacado do resto do rodapé de propósito (borda + fundo de
+   cartão + texto no tom secundário, não no mudo) — precisa ser ENCONTRÁVEL
+   por quem chegou pra tirar conclusão sobre alguém, não uma letra miúda
+   decorativa. Usa só tokens do tema, então acompanha o modo escuro sozinho. */
+.aviso-legal {
+  border: 1px solid var(--eixo);
+  border-left: 4px solid var(--serie-azul);
+  border-radius: 8px;
+  background: var(--superficie);
+  color: var(--texto-secundario);
+  padding: 14px 16px;
+  margin: 0 0 18px;
+}
+
+.aviso-legal p {
+  margin: 0;
+}
+
 @media (max-width: 640px) {
   .secao-cabecalho {
     flex-direction: column;

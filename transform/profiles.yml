@@ -1,13 +1,28 @@
 # Normalmente o profiles.yml (que diz AO DBT COMO se conectar ao banco) fica
 # fora do projeto, em ~/.dbt/profiles.yml, separado do código porque costuma
-# ter senha de banco de produção. Aqui não existe segredo nenhum — é só um
-# caminho de arquivo local — então deixamos o profiles.yml dentro do próprio
-# projeto (transform/), versionado no git, pra rodar igual em qualquer máquina
-# e no GitHub Actions sem nenhuma configuração extra de ambiente.
+# ter senha de banco de produção. Aqui não existe segredo nenhum — um caminho
+# de arquivo local num target, credenciais de laboratório local no outro —
+# então deixamos o profiles.yml dentro do próprio projeto (transform/),
+# versionado no git, pra rodar igual em qualquer máquina sem configuração
+# extra de ambiente.
 #
 # Rode os comandos dbt sempre de dentro da pasta transform/ (ex.: `cd
 # transform && dbt run`), porque os caminhos abaixo são relativos a essa
 # pasta.
+#
+# DOIS TARGETS, UM PROJETO: essa é a graça de separar profile (conexão) de
+# projeto (models). Os MESMOS arquivos .sql rodam:
+#   dev      -> DuckDB (arquivo local), pra desenvolver sem subir nada — default.
+#   postgres -> QUALQUER Postgres, escolhido só por env vars: o da stack
+#               docker-compose (Airflow local) OU um gerenciado na nuvem
+#               (Neon, no free tier — é o que o GitHub Actions usa, com os
+#               mesmos nomes de variável vindo dos secrets do repositório).
+#               O target já se chamou "docker"; renomeado quando o Neon
+#               entrou, porque o nome descrevia UMA das casas possíveis, não
+#               o que o target é.
+# Só os models de staging sabem da diferença (leem read_json_auto no DuckDB,
+# raw.* JSONB no Postgres — ver o bloco condicional por target.type neles);
+# dimensões, fatos e testes são idênticos nos dois bancos.
 br_public_spending:
   target: dev
   outputs:
@@ -17,4 +32,28 @@ br_public_spending:
       # rodando, não tem porta, não tem usuário/senha. "Conectar" no DuckDB é
       # só abrir esse arquivo, do mesmo jeito que abrir um .sqlite.
       path: "{{ env_var('DBT_DUCKDB_PATH', '../data/warehouse.duckdb') }}"
+      threads: 4
+
+    postgres:
+      type: postgres
+      # Todos os valores vêm de env vars COM defaults pro caso local: dentro
+      # do container do Airflow, o compose injeta host=postgres (nome do
+      # serviço na rede interna); da sua máquina contra o compose, o default
+      # localhost + porta publicada 5432 funciona sem exportar nada; no
+      # GitHub Actions, os secrets do repositório preenchem AS MESMAS
+      # variáveis apontando pro Neon — três casas, um target.
+      host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | int }}"
+      user: "{{ env_var('POSTGRES_USER', 'gastos') }}"
+      # Senha de laboratório local (rede interna do compose) — num banco
+      # exposto de verdade, viria de um gerenciador de segredos e este
+      # arquivo não estaria no git. Ver o comentário no docker-compose.yml.
+      password: "{{ env_var('POSTGRES_PASSWORD', 'gastos') }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'gastos') }}"
+      # Schema BASE dos models. O dbt concatena com o +schema de cada camada
+      # (dbt_project.yml) -> analytics_staging e analytics_marts — mesma
+      # convenção generate_schema_name que no DuckDB produz main_staging/
+      # main_marts. É por isso que scripts/publicar_site.py consulta
+      # "analytics_marts" e o export DuckDB consulta "main_marts".
+      schema: analytics
       threads: 4

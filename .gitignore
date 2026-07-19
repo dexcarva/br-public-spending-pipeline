@@ -25,3 +25,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Configuração local do Claude Code (permissões da sessão) — máquina de cada um.
+.claude/

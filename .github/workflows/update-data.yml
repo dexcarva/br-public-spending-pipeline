@@ -1,51 +1,83 @@
-# Este workflow É o "Airflow" deste projeto: em vez de um orquestrador
-# rodando 24h numa máquina (que custaria dinheiro e precisaria de
-# manutenção), usamos o cron nativo do GitHub Actions — que só liga a
-# máquina pelos ~2 minutos que o job leva, de graça em repositórios públicos.
+# Pipeline INCREMENTAL na nuvem, de graça — a versão adulta deste workflow.
 #
-# O fluxo é sempre o mesmo 4 passos do pipeline, na ordem:
-#   1. ingestão  (ingestion/extract_convenios.py)   -> baixa o dado bruto da API
-#   2. dbt build (transform/)                        -> transforma em dim/fato + testa qualidade
-#   3. export    (transform/export/export_static_json.py) -> gera os JSON pro site
-#   4. commit    dos JSON alterados de volta pro repositório
+# HISTÓRIA em três atos (cada um ensinou uma coisa):
+#   1. v1: cron semanal recarregando a janela INTEIRA de 3 meses num job de
+#      GitHub Actions -> o volume real da API estourou o tempo (uma janela de
+#      14 dias trouxe ~12.000 convênios em 48min; a API pagina de 15 em 15).
+#   2. A ingestão pesada migrou pra stack Docker/Airflow local (sem limite de
+#      tempo) — que continua existindo como laboratório completo pra quem
+#      forka (docker-compose.yml).
+#   3. v2 (esta): o desenho virou INCREMENTAL — cada execução processa só a
+#      janela de 1 dia, em minutos, e o histórico acumula num Postgres
+#      GERENCIADO GRATUITO (Neon), não no runner (que é descartável) nem no
+#      repositório (que incharia). O runner volta a ser suficiente, porque o
+#      trabalho diário encolheu de horas pra minutos: quem não coube na
+#      nuvem foi o DESENHO antigo, não o pipeline.
 #
-# Depois do passo 4, quem publica o site é o próprio GitHub Pages, configurado
-# (nas Settings do repositório) pra servir a pasta docs/ da branch main — ele
-# republica sozinho sempre que esses arquivos mudam, sem precisar de mais
-# nenhum passo de "deploy" aqui.
+# Fluxo (os mesmos passos da DAG local do Airflow, no mesmo código):
+#   1. ingestão da janela   (ingestion/extract_convenios.py, 1 dia por padrão)
+#   2. carga incremental    (scripts/carregar_raw_postgres.py -> Neon)
+#   3. dbt run + test       (transform/, target "postgres" -> Neon)
+#   4. publicação           (scripts/publicar_site.py -> docs/data/*.json)
+#   5. commit dos JSON      (o GitHub Pages republica o site sozinho)
+#
+# SEGREDOS NECESSÁRIOS (Settings -> Secrets and variables -> Actions):
+#   PORTAL_TRANSPARENCIA_API_KEY  (já existia)
+#   POSTGRES_HOST / POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+#     -> a connection string do projeto no Neon (https://neon.tech, free
+#        tier), separada em partes. MESMOS nomes de variável que o
+#        docker-compose usa: o código não sabe em qual mundo está.
 
 name: Atualizar dados de convênios
 
 on:
-  schedule:
-    # Toda segunda-feira às 06:17 UTC (03:17 no horário de Brasília).
-    # O minuto "quebrado" (17, não 00) é de propósito: milhares de workflows
-    # no GitHub tentam rodar exatamente em horas cheias, o que atrasa a fila
-    # de execução — um horário fora de hora costuma rodar mais na hora certa.
-    - cron: "17 6 * * 1"
-  # Permite disparar manualmente pela aba "Actions" do GitHub — essencial
-  # pra rodar o pipeline pela primeira vez, sem esperar até segunda-feira.
-  workflow_dispatch: {}
+  # O cron diário fica DESATIVADO até os secrets do Neon existirem no
+  # repositório (sem eles, a carga falharia todo dia às 6h). Pra ativar,
+  # basta descomentar depois de cadastrar os secrets:
+  # schedule:
+  #   # Diário às 06:17 UTC. O minuto "quebrado" (17, não 00) é de propósito:
+  #   # milhares de workflows disputam as horas cheias no GitHub, e horário
+  #   # fora de hora pega menos fila.
+  #   - cron: "17 6 * * *"
+  workflow_dispatch:
+    # Disparo manual COM janela opcional = mecanismo de BACKFILL: pra
+    # carregar um período histórico, dispare informando as datas (a carga
+    # delete-insert marca a janela inteira e é idempotente — repetir o mesmo
+    # período não duplica nada). Sem inputs, processa ontem — igual ao cron.
+    inputs:
+      data_inicial:
+        description: "Início da janela (DD/MM/AAAA) — vazio = ontem"
+        required: false
+        default: ""
+      data_final:
+        description: "Fim da janela (DD/MM/AAAA) — vazio = ontem"
+        required: false
+        default: ""
 
-# Evita duas execuções desse workflow rodando ao mesmo tempo (ex.: alguém
-# clica "rodar agora" enquanto o cron semanal também dispara) — a segunda
-# cancela a primeira em vez de as duas tentarem commitar juntas.
 concurrency:
+  # Duas execuções simultâneas fariam delete-insert nas mesmas tabelas do
+  # Neon — a segunda espera a primeira em vez de colidir.
   group: atualizar-dados
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
-  # "write" pra poder commitar os JSON atualizados de volta na branch main.
   contents: write
 
 jobs:
   atualizar-dados:
     runs-on: ubuntu-latest
-    # Testando contra a API real, um único dia recente já pode trazer muito
-    # mais convênios do que dias mais antigos (parece refletir "última
-    # atualização do registro", não só convênios novos) — 30 minutos se
-    # mostrou justo demais pra janela padrão de 3 meses. 60 dá folga.
-    timeout-minutes: 60
+    # Janela de 1 dia = minutos de execução. 30 é folga generosa (e um
+    # alarme: se estourar, algo está muito errado — não subir o timeout,
+    # investigar).
+    timeout-minutes: 30
+    env:
+      # Conexão com o Postgres gerenciado (Neon) — usada pela carga, pelo
+      # dbt (profiles.yml lê env vars) e pela publicação.
+      POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      POSTGRES_PORT: "5432"
     steps:
       - name: Baixar o código do repositório
         uses: actions/checkout@v4
@@ -59,41 +91,74 @@ jobs:
       - name: Instalar dependências
         run: pip install -r requirements.txt
 
-      - name: 1a. Ingestão — baixar convênios da API do Portal da Transparência
+      - name: Calcular a janela do dia (ou usar a informada no disparo manual)
+        id: janela
+        run: |
+          # Sem inputs (cron ou dispatch vazio): janela ROLANTE dos últimos 7
+          # dias até ontem — mesma decisão da DAG local, pelo mesmo motivo
+          # medido na prática: o filtro de data da fonte enxerga um carimbo
+          # de "última atualização" que ela re-carimba em lote, então o dado
+          # "mora" sempre perto do último reprocessamento; janelas fixas de
+          # 1 dia se esvaziam e perderiam quase tudo. A sobreposição entre
+          # execuções consecutivas é inofensiva: a carga é delete-insert por
+          # janela e o staging deduplica por id.
+          INICIAL="${{ inputs.data_inicial }}"
+          FINAL="${{ inputs.data_final }}"
+          if [ -z "$INICIAL" ] || [ -z "$FINAL" ]; then
+            INICIAL=$(date -u -d "7 days ago" +%d/%m/%Y)
+            FINAL=$(date -u -d "yesterday" +%d/%m/%Y)
+          fi
+          # O carregador marca a janela no banco em formato ISO — convertemos
+          # aqui, uma vez, em vez de cada script adivinhar formatos.
+          echo "inicial=$INICIAL" >> "$GITHUB_OUTPUT"
+          echo "final=$FINAL" >> "$GITHUB_OUTPUT"
+          echo "inicial_iso=$(date -u -d "$(echo $INICIAL | awk -F/ '{print $3"-"$2"-"$1}')" +%F)" >> "$GITHUB_OUTPUT"
+          echo "final_iso=$(date -u -d "$(echo $FINAL | awk -F/ '{print $3"-"$2"-"$1}')" +%F)" >> "$GITHUB_OUTPUT"
+          echo "Janela desta execução: $INICIAL a $FINAL"
+
+      - name: 1a. Ingestão — convênios da janela
         env:
           PORTAL_TRANSPARENCIA_API_KEY: ${{ secrets.PORTAL_TRANSPARENCIA_API_KEY }}
+          CONVENIOS_DATA_INICIAL: ${{ steps.janela.outputs.inicial }}
+          CONVENIOS_DATA_FINAL: ${{ steps.janela.outputs.final }}
         run: python ingestion/extract_convenios.py
 
-      - name: 1b. Ingestão — baixar emendas parlamentares da API do Portal da Transparência
+      - name: 1b. Ingestão — snapshot de emendas parlamentares
         env:
           PORTAL_TRANSPARENCIA_API_KEY: ${{ secrets.PORTAL_TRANSPARENCIA_API_KEY }}
         run: python ingestion/extract_emendas.py
 
-      - name: 2. Transformação — rodar models e testes do dbt
+      - name: 2a. Carga incremental — convênios da janela no Neon
+        env:
+          CARGA_JANELA_INICIO: ${{ steps.janela.outputs.inicial_iso }}
+          CARGA_JANELA_FIM: ${{ steps.janela.outputs.final_iso }}
+        run: python scripts/carregar_raw_postgres.py convenios
+
+      - name: 2b. Carga snapshot — emendas no Neon
+        run: python scripts/carregar_raw_postgres.py emendas
+
+      - name: 3. Transformação — models e testes do dbt contra o Neon
         working-directory: transform
-        run: dbt build --profiles-dir .
-
-      - name: 3. Export — gerar os JSON estáticos que o site consome
-        run: python transform/export/export_static_json.py
-
-      - name: 4. Publicar — commitar os JSON atualizados
         run: |
-          # Identidade do "autor" do commit automático — não é uma conta de
-          # verdade, é a identidade padrão que o GitHub reserva pra commits
-          # feitos por Actions.
+          dbt run --profiles-dir . --target postgres
+          dbt test --profiles-dir . --target postgres
+
+      - name: 4. Publicação — gerar os JSON estáticos que o site consome
+        run: python scripts/publicar_site.py
+
+      - name: 5. Commitar os JSON atualizados
+        run: |
+          # Identidade padrão que o GitHub reserva pra commits de Actions.
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add docs/data/
 
-          # Se a janela de datas não trouxe nenhum dado novo em relação à
-          # última execução, os JSON exportados saem idênticos aos que já
-          # estão no repositório — `git diff --staged --quiet` detecta esse
-          # caso e a gente pula o commit, em vez de criar um commit vazio
-          # toda semana só por rodar o workflow.
+          # Janela sem novidade => JSONs idênticos => nada a commitar (evita
+          # um commit vazio por dia só porque o workflow rodou).
           if git diff --staged --quiet; then
             echo "Nenhuma mudança nos dados — nada para commitar."
           else
-            git commit -m "chore: atualiza dados de convênios ($(date -u +%Y-%m-%d))"
+            git commit -m "chore: atualiza dados (janela ${{ steps.janela.outputs.inicial }} a ${{ steps.janela.outputs.final }})"
             git push
           fi

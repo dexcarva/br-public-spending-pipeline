@@ -72,6 +72,28 @@ models:
           - unique
           - not_null
 
+  - name: dim_ano_eleitoral
+    description: >
+      Calendário eleitoral brasileiro derivado por aritmética (ano par =
+      eleição; resto 2 na divisão por 4 = geral, múltiplo de 4 = municipal) —
+      permite cruzar gasto de emenda com ciclo eleitoral sem nenhuma API
+      nova. Chave natural (ano), sem surrogate de propósito: ver o
+      comentário no próprio model.
+    columns:
+      - name: ano
+        description: O ano-exercício (chave natural, join direto com fct_emendas.ano).
+        data_tests:
+          - unique
+          - not_null
+      - name: tipo_eleicao
+        description: Geral, Municipal ou nulo (ano sem eleição regular).
+        data_tests:
+          # Vocabulário FECHADO por construção (vem de um CASE nosso, não de
+          # API) — o teste protege contra alguém editar o CASE e introduzir
+          # uma grafia nova sem atualizar quem consome (export/painel).
+          - accepted_values:
+              values: ["Geral", "Municipal"]
+
   - name: fct_emendas
     description: >
       Uma linha por emenda parlamentar, com o ciclo orçamentário (empenhado
