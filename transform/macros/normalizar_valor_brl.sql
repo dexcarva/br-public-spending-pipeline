@@ -12,6 +12,14 @@
     milhar e troca a vírgula decimal por ponto antes de converter. Se não tem
     vírgula (nem tem valor nenhum), trata como já numérico ou nulo.
 
+    ESPAÇO ANTES DO SINAL: alguns valores negativos vêm como "- 721,68" (com
+    espaço entre o "-" e o número) em vez de "-721,68" — encontrado em
+    valorRestoInscrito, ao investigar por que o dbt run quebrava todo dia no
+    Neon/Postgres com "invalid input syntax for type numeric" enquanto
+    passava limpo no DuckDB local (CAST do DuckDB tolera o espaço, o do
+    Postgres não). Removemos todo espaço antes do CAST — nenhum desses
+    campos tem espaço legítimo, então é seguro tirar sempre.
+
     PORTABILIDADE ENTRE BANCOS: este macro roda nos DOIS targets do projeto
     (DuckDB no "dev", Postgres no "docker") — por isso só usamos funções que
     existem identicamente nos dois dialetos. O teste "tem vírgula?" era feito
@@ -25,10 +33,10 @@
         when nullif(cast({{ coluna }} as varchar), '') is null then null
         when position(',' in cast({{ coluna }} as varchar)) > 0 then
             cast(
-                replace(replace(cast({{ coluna }} as varchar), '.', ''), ',', '.')
+                replace(replace(replace(cast({{ coluna }} as varchar), '.', ''), ',', '.'), ' ', '')
                 as decimal(18, 2)
             )
         else
-            cast({{ coluna }} as decimal(18, 2))
+            cast(replace(cast({{ coluna }} as varchar), ' ', '') as decimal(18, 2))
     end
 {% endmacro %}
