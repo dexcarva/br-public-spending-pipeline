@@ -86,6 +86,14 @@ JANELA_FIM_API = "{{ dag_run.run_after.strftime('%d/%m/%Y') }}"
 JANELA_INICIO_ISO = "{{ (dag_run.run_after - macros.timedelta(days=6)).strftime('%Y-%m-%d') }}"
 JANELA_FIM_ISO = "{{ dag_run.run_after.strftime('%Y-%m-%d') }}"
 
+# Anos de emendas a recarregar no refresh diário (Fase 8.1): ano corrente +
+# anterior — cobre revisões recentes sem retocar o histórico. run_after já é
+# datetime puro (mesma pegadinha nº2 do bloco acima), então .year funciona
+# direto. O histórico 2014-até-o-ano-retrasado é o backfill único (rodado
+# fora da DAG, uma vez) — carregar_raw_postgres.py agora faz delete-insert
+# SÓ dos anos que aparecem no arquivo, então esses 2 anos nunca tocam nele.
+EMENDAS_ANOS_REFRESH = "{{ dag_run.run_after.year }},{{ dag_run.run_after.year - 1 }}"
+
 with DAG(
     dag_id="pipeline_gastos_publicos",
     description="Ingestão incremental Portal da Transparência -> Postgres -> dbt -> JSON do site",
@@ -157,13 +165,17 @@ with DAG(
     # só-no-presente (snapshot de emendas, publicação do site).
     somente_run_mais_recente = LatestOnlyOperator(task_id="somente_run_mais_recente")
 
-    # --- 1b/2b. Emendas: snapshot completo, só na run mais recente ----------
-    # Sem override de EMENDAS_ANOS: vale o default do script (3 anos), porque
-    # a carga é truncar-e-recarregar — recarregar SÓ o ano corrente apagaria
-    # os anteriores. Snapshot se substitui inteiro ou não se substitui.
+    # --- 1b/2b. Emendas: snapshot do ano corrente + anterior, só na run mais
+    # recente ------------------------------------------------------------
+    # EMENDAS_ANOS_REFRESH override (Fase 8.1): agora que a carga faz
+    # delete-insert POR ANO (não truncate-tudo), recarregar só os 2 anos que
+    # de fato mudam é seguro — o histórico 2014+ (backfill único) não é
+    # tocado por esta task.
     extract_emendas = BashOperator(
         task_id="extract_emendas",
         bash_command=f"cd {RAIZ_PIPELINE} && python ingestion/extract_emendas.py",
+        env={"EMENDAS_ANOS": EMENDAS_ANOS_REFRESH},
+        append_env=True,
         # Mesma chave de API dos convênios -> mesmo pool, mesma fila.
         pool="api_portal_transparencia",
     )

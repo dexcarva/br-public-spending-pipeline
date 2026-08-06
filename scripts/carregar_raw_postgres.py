@@ -19,12 +19,17 @@ DUAS ESTRATÉGIAS DE CARGA, uma por fonte — e a diferença é a lição:
     (parcela liberada etc.), então quem lê raw.convenios precisa deduplicar
     por id ficando com a versão mais recente — feito em stg_convenios.sql.
 
-  EMENDAS -> SNAPSHOT (truncar-e-recarregar, como sempre foi).
+  EMENDAS -> SNAPSHOT POR ANO (delete-insert só dos anos presentes na carga).
     O endpoint devolve o estado ACUMULADO do ano (valores consolidados até
-    hoje), não eventos — não existe "só o que mudou ontem" pra pedir.
-    Re-baixar o(s) ano(s) e substituir é a representação correta da fonte, e
-    é barato (~5 min/ano). Forçar incremental aqui seria complexidade sem
-    ganho: a natureza da fonte decide a estratégia, não a moda.
+    hoje), não eventos — não existe "só o que mudou ontem" pra pedir; o
+    snapshot inteiro de um ano se substitui ou não se substitui. Mas "o ano
+    inteiro" não precisa ser TODOS os anos: cada carga só apaga e recarrega
+    os anos que o arquivo de entrada trouxe (coluna ano_snapshot, derivada de
+    dado->>'ano' — o mesmo campo que stg_emendas.sql extrai). O refresh
+    diário passa EMENDAS_ANOS=ano_corrente,ano_anterior e não toca no
+    histórico; o backfill único (2014-2024, Fase 8.1) roda uma vez e fica —
+    truncar tudo a cada carga custaria refazer 13 anos de API por dia só pra
+    atualizar os 2 anos que de fato mudam.
 
 USO (subcomando escolhe a fonte — é assim que a DAG chama):
     python scripts/carregar_raw_postgres.py convenios
@@ -190,8 +195,11 @@ def carregar_convenios() -> None:
 
 
 def carregar_emendas() -> None:
-    """Carga SNAPSHOT de emendas: truncar-e-recarregar (ver o cabeçalho —
-    a fonte devolve estado acumulado por ano, não eventos)."""
+    """Carga SNAPSHOT POR ANO de emendas: delete-insert só dos anos que o
+    arquivo de entrada trouxe (ver o cabeçalho do módulo). Passa pelos dados
+    duas vezes dentro da MESMA transação — uma tabela temporária de staging
+    recebe o JSONB bruto primeiro, e é dela (não do Python) que extraímos os
+    anos presentes, via o mesmo dado->>'ano' que stg_emendas.sql usa."""
     linhas = _ler_jsonl(EMENDAS_PATH)
     conexao = _conectar()
     try:
@@ -205,16 +213,44 @@ def carregar_emendas() -> None:
                         carregado_em  timestamptz  not null default now()
                     )
                 """)
-                # TRUNCATE (não DELETE): zera desalocando páginas inteiras,
-                # sem varrer linha a linha — e dentro da transação é
-                # reversível: falha no meio = ROLLBACK = snapshot anterior
-                # permanece intacto.
-                cur.execute("truncate table raw.emendas")
-                total = _inserir_lotes(cur, "raw.emendas", linhas)
+                # MIGRAÇÃO LEVE (mesmo padrão do ALTER em raw.convenios): a
+                # coluna nasce aqui pra quem já tinha a tabela da era
+                # truncar-tudo. O UPDATE seguinte é o que evita linha órfã:
+                # sem ele, dado carregado ANTES desta mudança fica com
+                # ano_snapshot NULL pra sempre, e "where ano_snapshot in
+                # (...)" nunca re-casa NULL — a próxima carga do mesmo ano
+                # duplicaria em vez de substituir. Depois da primeira
+                # execução, todo mundo já tem a coluna preenchida e o UPDATE
+                # vira no-op (0 linhas).
+                cur.execute("alter table raw.emendas add column if not exists ano_snapshot int")
+                cur.execute("update raw.emendas set ano_snapshot = (dado->>'ano')::int where ano_snapshot is null")
+
+                # Staging: só pra descobrir, com SQL (não Python), quais anos
+                # este arquivo trouxe — evita reparsear o mesmo JSON duas
+                # vezes com lógica duplicada da que já existe em stg_emendas.
+                # "on commit drop" limpa sozinha no fim da transação.
+                cur.execute("create temporary table stage_emendas (dado jsonb not null) on commit drop")
+                total = _inserir_lotes(cur, "stage_emendas", linhas)
+
+                # O coração do delete-insert por ano: some só dos anos que
+                # ESTE arquivo contém — histórico de outros anos (backfill
+                # já rodado, ou anos que esta carga não pediu) fica intacto.
+                cur.execute("""
+                    delete from raw.emendas
+                    where ano_snapshot in (
+                        select distinct (dado->>'ano')::int from stage_emendas
+                    )
+                """)
+                apagadas = cur.rowcount
+
+                cur.execute("""
+                    insert into raw.emendas (dado, ano_snapshot)
+                    select dado, (dado->>'ano')::int from stage_emendas
+                """)
     finally:
         conexao.close()
 
-    print(f"raw.emendas: snapshot substituído com {total} registros.")
+    print(f"raw.emendas: {apagadas} linhas antigas dos anos recarregados removidas, {total} inseridas.")
     if total == 0:
         print("AVISO: raw.emendas ficou vazia — confira os anos consultados.",
               file=sys.stderr)

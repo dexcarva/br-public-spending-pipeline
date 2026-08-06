@@ -124,7 +124,12 @@ jobs:
       - name: 1b. Ingestão — snapshot de emendas parlamentares
         env:
           PORTAL_TRANSPARENCIA_API_KEY: ${{ secrets.PORTAL_TRANSPARENCIA_API_KEY }}
-        run: python ingestion/extract_emendas.py
+        run: |
+          # Fase 8.1: só ano corrente + anterior — a carga agora é
+          # delete-insert POR ANO (scripts/carregar_raw_postgres.py), então
+          # isso não apaga o histórico 2014+ carregado pelo backfill único.
+          export EMENDAS_ANOS="$(date -u +%Y),$(date -u -d '1 year ago' +%Y)"
+          python ingestion/extract_emendas.py
 
       - name: 2a. Carga incremental — convênios da janela no Neon
         env:
